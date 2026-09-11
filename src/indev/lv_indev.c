@@ -1364,10 +1364,23 @@ static void indev_proc_press(lv_indev_t * indev)
 
     indev->pointer.scroll_throw_vect.x = 0;
     indev->pointer.scroll_throw_vect.y = 0;
+    int32_t scroll_throw_samples = 0;
     for(int i = 0; i < LV_INDEV_VECT_HIST_SIZE; i++) {
         int32_t t = lv_tick_diff(indev->timestamp, indev->pointer.vect_hist_timestamp[i]);
+        if(t >= 99) continue;
         indev->pointer.scroll_throw_vect.x += indev_scroll_throw_decay(indev->pointer.vect_hist[i].x, t);
         indev->pointer.scroll_throw_vect.y += indev_scroll_throw_decay(indev->pointer.vect_hist[i].y, t);
+        scroll_throw_samples++;
+    }
+
+    /* The upstream sum intentionally amplifies release velocity by every
+     * recent input sample. On AERA's high-rate touch stream that makes a list
+     * accelerate as the finger lifts. Start inertia at the decayed average of
+     * the measured finger vectors instead, then retain LVGL's smooth throw
+     * decay. */
+    if(scroll_throw_samples > 1) {
+        indev->pointer.scroll_throw_vect.x /= scroll_throw_samples;
+        indev->pointer.scroll_throw_vect.y /= scroll_throw_samples;
     }
 
     indev->pointer.scroll_throw_vect_ori = indev->pointer.scroll_throw_vect;

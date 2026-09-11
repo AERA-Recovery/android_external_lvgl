@@ -117,6 +117,11 @@ extern "C" {
 typedef struct {
     unsigned int texture;
     const lv_area_t * texture_area;
+    float precise_x;
+    float precise_y;
+    float precise_w;
+    float precise_h;
+    bool use_precise_area;
     lv_opa_t opa;
     int32_t disp_w;
     int32_t disp_h;

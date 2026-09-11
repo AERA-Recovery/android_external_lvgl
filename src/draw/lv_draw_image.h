@@ -48,6 +48,11 @@ struct _lv_draw_image_dsc_t {
     /**Same as `scale_y` but vertically*/
     int32_t scale_y;
 
+    /**Optional Q16 scale used by GPU backends for sub-pixel animation.
+     * Zero keeps the regular 1/256 scale and all existing rendering paths.*/
+    uint32_t gpu_scale_x_q16;
+    uint32_t gpu_scale_y_q16;
+
     /**Parallelogram like transformation of the image horizontally in 0.1 degree unit. E.g. 456 means 45.6°.*/
     int32_t skew_x;
 

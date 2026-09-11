@@ -17,6 +17,8 @@ extern "C" {
 #include "../../lv_conf_internal.h"
 #if LV_USE_DRAW_OPENGLES
 
+#include <stdbool.h>
+
 /*********************
  *      DEFINES
  *********************/
@@ -31,6 +33,9 @@ extern "C" {
 
 void lv_draw_opengles_init(void);
 void lv_draw_opengles_deinit(void);
+
+/** Enable or disable registration of the OpenGL draw unit at lv_init(). */
+void lv_draw_opengles_set_enabled(bool enabled);
 
 /**********************
  *      MACROS

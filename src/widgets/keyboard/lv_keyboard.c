@@ -329,7 +329,8 @@ void lv_keyboard_def_event_cb(lv_event_t * e)
     const char * txt = lv_buttonmatrix_get_button_text(obj, btn_id);
     if(txt == NULL) return;
 
-    if(lv_strcmp(txt, LV_KEYBOARD_CTRL_BUTTON_MODE_TEXT_LOWER) == 0) {
+    if(lv_strcmp(txt, LV_KEYBOARD_CTRL_BUTTON_MODE_TEXT_LOWER) == 0 ||
+       lv_strcmp(txt, "ABC") == 0) {
         keyboard->mode = LV_KEYBOARD_MODE_TEXT_LOWER;
         lv_buttonmatrix_set_map(obj, kb_map[LV_KEYBOARD_MODE_TEXT_LOWER]);
         lv_keyboard_update_ctrl_map(obj);
@@ -349,9 +350,18 @@ void lv_keyboard_def_event_cb(lv_event_t * e)
         lv_keyboard_update_ctrl_map(obj);
         return;
     }
-    else if(lv_strcmp(txt, LV_KEYBOARD_CTRL_BUTTON_MODE_SPECIAL) == 0) {
+    else if(lv_strcmp(txt, LV_KEYBOARD_CTRL_BUTTON_MODE_SPECIAL) == 0 ||
+            lv_strcmp(txt, "?123") == 0) {
         keyboard->mode = LV_KEYBOARD_MODE_SPECIAL;
         lv_buttonmatrix_set_map(obj, kb_map[LV_KEYBOARD_MODE_SPECIAL]);
+        lv_keyboard_update_ctrl_map(obj);
+        return;
+    }
+    else if(lv_strcmp(txt, LV_SYMBOL_UP) == 0) {
+        keyboard->mode = keyboard->mode == LV_KEYBOARD_MODE_TEXT_UPPER
+                             ? LV_KEYBOARD_MODE_TEXT_LOWER
+                             : LV_KEYBOARD_MODE_TEXT_UPPER;
+        lv_buttonmatrix_set_map(obj, kb_map[keyboard->mode]);
         lv_keyboard_update_ctrl_map(obj);
         return;
     }

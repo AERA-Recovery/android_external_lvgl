@@ -171,6 +171,30 @@ void lv_opengles_render_texture(unsigned int texture, const lv_area_t * texture_
     LV_PROFILER_DRAW_END;
 }
 
+void lv_opengles_render_texture_precise(unsigned int texture, float x, float y, float width, float height,
+                                        lv_opa_t opa, int32_t disp_w, int32_t disp_h,
+                                        const lv_area_t * texture_clip_area, bool h_flip, bool v_flip)
+{
+    LV_PROFILER_DRAW_BEGIN;
+    lv_opengles_render_params_t params;
+    lv_opengles_render_params_init(&params);
+    params.texture = texture;
+    params.texture_area = texture_clip_area;
+    params.precise_x = x;
+    params.precise_y = y;
+    params.precise_w = width;
+    params.precise_h = height;
+    params.use_precise_area = true;
+    params.opa = opa;
+    params.disp_w = disp_w;
+    params.disp_h = disp_h;
+    params.texture_clip_area = texture_clip_area;
+    params.h_flip = h_flip;
+    params.v_flip = v_flip;
+    lv_opengles_render(&params);
+    LV_PROFILER_DRAW_END;
+}
+
 void lv_opengles_render_texture_rbswap(unsigned int texture, const lv_area_t * texture_area, lv_opa_t opa,
                                        int32_t disp_w,
                                        int32_t disp_h, const lv_area_t * texture_clip_area, bool h_flip, bool v_flip)
@@ -297,7 +321,23 @@ void lv_opengles_render(const lv_opengles_render_params_t * params)
     LV_ASSERT_NULL(params);
     LV_PROFILER_DRAW_BEGIN;
     lv_area_t intersection;
-    if(!lv_area_intersect(&intersection, params->texture_area, params->texture_clip_area)) {
+    float precise_x1 = 0.f;
+    float precise_y1 = 0.f;
+    float precise_x2 = 0.f;
+    float precise_y2 = 0.f;
+    if(params->use_precise_area) {
+        precise_x1 = LV_MAX(params->precise_x, (float)params->texture_clip_area->x1);
+        precise_y1 = LV_MAX(params->precise_y, (float)params->texture_clip_area->y1);
+        precise_x2 = LV_MIN(params->precise_x + params->precise_w,
+                            (float)params->texture_clip_area->x2 + 1.f);
+        precise_y2 = LV_MIN(params->precise_y + params->precise_h,
+                            (float)params->texture_clip_area->y2 + 1.f);
+        if(precise_x2 <= precise_x1 || precise_y2 <= precise_y1) {
+            LV_PROFILER_DRAW_END;
+            return;
+        }
+    }
+    else if(!lv_area_intersect(&intersection, params->texture_area, params->texture_clip_area)) {
         LV_PROFILER_DRAW_END;
         return;
     }
@@ -312,7 +352,13 @@ void lv_opengles_render(const lv_opengles_render_params_t * params)
     float tex_w, tex_h, full_w, full_h, inter_w, inter_h;
     full_w = (float)params->disp_w;
     full_h = (float)params->disp_h;
-    if(is_turned) {
+    if(params->use_precise_area) {
+        tex_w = precise_x2 - precise_x1;
+        tex_h = precise_y2 - precise_y1;
+        inter_w = precise_x1;
+        inter_h = precise_y1;
+    }
+    else if(is_turned) {
         tex_w = (float)lv_area_get_height(&intersection);
         tex_h = (float)lv_area_get_width(&intersection);
         inter_w = (float)intersection.y1;
@@ -333,18 +379,38 @@ void lv_opengles_render(const lv_opengles_render_params_t * params)
     ver_scale = params->v_flip ? ver_scale : -ver_scale;
 
     if(params->texture != 0) {
-        float clip_x1 = params->h_flip ? lv_opengles_map_float(params->texture_clip_area->x2, params->texture_area->x2,
+        float clip_x1;
+        float clip_x2;
+        float clip_y1;
+        float clip_y2;
+        if(params->use_precise_area) {
+            clip_x1 = (precise_x1 - params->precise_x) / params->precise_w;
+            clip_x2 = (precise_x2 - params->precise_x) / params->precise_w;
+            clip_y1 = (precise_y1 - params->precise_y) / params->precise_h;
+            clip_y2 = (precise_y2 - params->precise_y) / params->precise_h;
+            if(params->h_flip) {
+                clip_x1 = 1.f - clip_x1;
+                clip_x2 = 1.f - clip_x2;
+            }
+            if(params->v_flip) {
+                clip_y1 = 1.f - clip_y1;
+                clip_y2 = 1.f - clip_y2;
+            }
+        }
+        else {
+            clip_x1 = params->h_flip ? lv_opengles_map_float(params->texture_clip_area->x2, params->texture_area->x2,
                                                                params->texture_area->x1, 0.f, 1.f)
                         : lv_opengles_map_float(params->texture_clip_area->x1, params->texture_area->x1, params->texture_area->x2, 0.f, 1.f);
-        float clip_x2 = params->h_flip ? lv_opengles_map_float(params->texture_clip_area->x1, params->texture_area->x2,
+            clip_x2 = params->h_flip ? lv_opengles_map_float(params->texture_clip_area->x1, params->texture_area->x2,
                                                                params->texture_area->x1, 0.f, 1.f)
                         : lv_opengles_map_float(params->texture_clip_area->x2, params->texture_area->x1, params->texture_area->x2, 0.f, 1.f);
-        float clip_y1 = params->v_flip ? lv_opengles_map_float(params->texture_clip_area->y2, params->texture_area->y2,
+            clip_y1 = params->v_flip ? lv_opengles_map_float(params->texture_clip_area->y2, params->texture_area->y2,
                                                                params->texture_area->y1, 0.f, 1.f)
                         : lv_opengles_map_float(params->texture_clip_area->y1, params->texture_area->y1, params->texture_area->y2, 0.f, 1.f);
-        float clip_y2 = params->v_flip ? lv_opengles_map_float(params->texture_clip_area->y1, params->texture_area->y2,
+            clip_y2 = params->v_flip ? lv_opengles_map_float(params->texture_clip_area->y1, params->texture_area->y2,
                                                                params->texture_area->y1, 0.f, 1.f)
                         : lv_opengles_map_float(params->texture_clip_area->y2, params->texture_area->y1, params->texture_area->y2, 0.f, 1.f);
+        }
 
         const float positions[LV_OPENGLES_VERTEX_BUFFER_LEN] = {
             -1.f,  1.0f, clip_x1, clip_y2,
