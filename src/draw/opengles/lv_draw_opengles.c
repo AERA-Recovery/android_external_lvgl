@@ -58,17 +58,9 @@ typedef struct {
     int32_t streaming_height;
 } lv_draw_opengles_unit_t;
 
-typedef struct {
-    lv_draw_dsc_base_t * draw_dsc;
-    int32_t w;
-    int32_t h;
-    uint32_t text_hash;
-    unsigned int texture;
-} cache_data_t;
-
 /* All descriptors accepted by execute_drawing().  Keeping the transient cache
- * key here avoids two heap allocations for every draw task while still letting
- * us normalize absolute coordinates without mutating LVGL's live task. */
+ * key inline avoids heap-pointer lifetime corruption while still letting us
+ * normalize absolute coordinates without mutating LVGL's live task. */
 typedef union {
     lv_draw_dsc_base_t base;
     lv_draw_fill_dsc_t fill;
@@ -80,6 +72,14 @@ typedef union {
     lv_draw_triangle_dsc_t triangle;
     lv_draw_line_dsc_t line;
 } draw_dsc_key_t;
+
+typedef struct {
+    draw_dsc_key_t draw_dsc;
+    int32_t w;
+    int32_t h;
+    uint32_t text_hash;
+    unsigned int texture;
+} cache_data_t;
 
 /**********************
  *  STATIC PROTOTYPES
@@ -183,9 +183,7 @@ static void opengles_texture_cache_free_cb(cache_data_t * cached_data, void * us
     LV_UNUSED(user_data);
     LV_PROFILER_DRAW_BEGIN;
 
-    lv_free(cached_data->draw_dsc);
     GL_CALL(glDeleteTextures(1, &cached_data->texture));
-    cached_data->draw_dsc = NULL;
     cached_data->texture = 0;
     LV_PROFILER_DRAW_END;
 }
@@ -204,19 +202,22 @@ static lv_cache_compare_res_t opengles_texture_cache_compare_cb(const cache_data
         return lhs->text_hash > rhs->text_hash ? 1 : -1;
     }
 
-    uint32_t lhs_dsc_size = lhs->draw_dsc->dsc_size;
-    uint32_t rhs_dsc_size = rhs->draw_dsc->dsc_size;
+    const lv_draw_dsc_base_t * lhs_draw_dsc = &lhs->draw_dsc.base;
+    const lv_draw_dsc_base_t * rhs_draw_dsc = &rhs->draw_dsc.base;
+    uint32_t lhs_dsc_size = lhs_draw_dsc->dsc_size;
+    uint32_t rhs_dsc_size = rhs_draw_dsc->dsc_size;
 
     if(lhs_dsc_size != rhs_dsc_size) {
         return lhs_dsc_size > rhs_dsc_size ? 1 : -1;
     }
 
-    const uint8_t * left_draw_dsc = (const uint8_t *)lhs->draw_dsc;
-    const uint8_t * right_draw_dsc = (const uint8_t *)rhs->draw_dsc;
+    const uint8_t * left_draw_dsc = (const uint8_t *)lhs_draw_dsc;
+    const uint8_t * right_draw_dsc = (const uint8_t *)rhs_draw_dsc;
     left_draw_dsc += sizeof(lv_draw_dsc_base_t);
     right_draw_dsc += sizeof(lv_draw_dsc_base_t);
 
-    int cmp_res = lv_memcmp(left_draw_dsc, right_draw_dsc, lhs->draw_dsc->dsc_size - sizeof(lv_draw_dsc_base_t));
+    int cmp_res = lv_memcmp(left_draw_dsc, right_draw_dsc,
+                           lhs_dsc_size - sizeof(lv_draw_dsc_base_t));
 
     if(cmp_res != 0) {
         return cmp_res > 0 ? 1 : -1;
@@ -345,10 +346,6 @@ static bool draw_to_texture(lv_draw_opengles_unit_t * u, cache_data_t * cache_da
         lv_obj_remove_flag(obj, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
     }
 
-    lv_draw_dsc_base_t * base_dsc = task->draw_dsc;
-    cache_data->draw_dsc = lv_malloc(base_dsc->dsc_size);
-    lv_memcpy((void *)cache_data->draw_dsc, base_dsc, base_dsc->dsc_size);
-
     switch(task->type) {
         case LV_DRAW_TASK_TYPE_FILL: {
                 lv_draw_fill_dsc_t * fill_dsc = task->draw_dsc;
@@ -429,8 +426,6 @@ static bool draw_to_texture(lv_draw_opengles_unit_t * u, cache_data_t * cache_da
                 break;
             }
         default:
-            /*The malloced cache_data->draw_dsc will be freed automatically on failure
-            *in opengles_texture_cache_free_cb*/
             LV_PROFILER_DRAW_END;
             return false;
     }
@@ -599,11 +594,10 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
         LV_PROFILER_DRAW_END;
         return;
     }
-    draw_dsc_key_t key;
-    lv_memzero(&key, sizeof(key));
-    lv_memcpy(&key, live_draw_dsc, live_draw_dsc->dsc_size);
     cache_data_t data_to_find;
-    data_to_find.draw_dsc = &key.base;
+    lv_memzero(&data_to_find, sizeof(data_to_find));
+    lv_memcpy(&data_to_find.draw_dsc, live_draw_dsc,
+              live_draw_dsc->dsc_size);
     bool h_flip = false;
     bool v_flip = false;
 #if LV_USE_3DTEXTURE
@@ -620,14 +614,14 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
 
     if(t->type == LV_DRAW_TASK_TYPE_LABEL) {
         const lv_draw_label_dsc_t * label_dsc =
-            (const lv_draw_label_dsc_t *)data_to_find.draw_dsc;
+            &data_to_find.draw_dsc.label;
         data_to_find.text_hash = opengles_text_hash(label_dsc->text);
     }
 
     /* user_data stores the renderer to differentiate it from SW rendered
      * tasks. The cache comparator skips the base descriptor, but clear it in
      * the transient key as well so cache creation receives a clean copy. */
-    data_to_find.draw_dsc->user_data = NULL;
+    data_to_find.draw_dsc.base.user_data = NULL;
 
     /*img_dsc->image_area is an absolute coordinate so it's different
      *for the same image on a different position. So make it relative before using for cache. */
@@ -635,7 +629,7 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
     lv_area_t original_real_area = t->_real_area;
     bool gpu_scaled_image = false;
     if(t->type == LV_DRAW_TASK_TYPE_IMAGE) {
-        lv_draw_image_dsc_t * img_dsc = (lv_draw_image_dsc_t *)data_to_find.draw_dsc;
+        lv_draw_image_dsc_t * img_dsc = &data_to_find.draw_dsc.image;
         if(lv_image_src_get_type(img_dsc->src) == LV_IMAGE_SRC_VARIABLE &&
            img_dsc->rotation == 0 && img_dsc->skew_x == 0 && img_dsc->skew_y == 0 &&
            !img_dsc->tile && img_dsc->clip_radius == 0 && img_dsc->bitmap_mask_src == NULL) {
@@ -664,7 +658,7 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
                          -original_area.x1, -original_area.y1);
     }
     else if(t->type == LV_DRAW_TASK_TYPE_TRIANGLE) {
-        lv_draw_triangle_dsc_t * tri_dsc = (lv_draw_triangle_dsc_t *)data_to_find.draw_dsc;
+        lv_draw_triangle_dsc_t * tri_dsc = &data_to_find.draw_dsc.triangle;
         tri_dsc->p[0].x -= t->area.x1;
         tri_dsc->p[0].y -= t->area.y1;
         tri_dsc->p[1].x -= t->area.x1;
@@ -673,14 +667,14 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
         tri_dsc->p[2].y -= t->area.y1;
     }
     else if(t->type == LV_DRAW_TASK_TYPE_LINE) {
-        lv_draw_line_dsc_t * line_dsc = (lv_draw_line_dsc_t *)data_to_find.draw_dsc;
+        lv_draw_line_dsc_t * line_dsc = &data_to_find.draw_dsc.line;
         line_dsc->p1.x -= t->area.x1;
         line_dsc->p1.y -= t->area.y1;
         line_dsc->p2.x -= t->area.x1;
         line_dsc->p2.y -= t->area.y1;
     }
     else if(t->type == LV_DRAW_TASK_TYPE_ARC) {
-        lv_draw_arc_dsc_t * arc_dsc = (lv_draw_arc_dsc_t *)data_to_find.draw_dsc;
+        lv_draw_arc_dsc_t * arc_dsc = &data_to_find.draw_dsc.arc;
         arc_dsc->center.x -= t->area.x1;
         arc_dsc->center.y -= t->area.y1;
     }
@@ -697,7 +691,7 @@ static void draw_from_cached_texture(lv_draw_task_t * t)
     /* Cache creation renders with the normalized descriptor and stores that
      * descriptor in the cache. Restore the live task pointer immediately
      * afterwards; the task itself is never modified. */
-    t->draw_dsc = data_to_find.draw_dsc;
+    t->draw_dsc = &data_to_find.draw_dsc.base;
     lv_cache_entry_t * entry_cached = lv_cache_acquire_or_create(u->texture_cache, &data_to_find, u);
     t->draw_dsc = live_draw_dsc;
 
