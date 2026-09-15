@@ -152,7 +152,7 @@
 #define LV_USE_RLE 0
 #define LV_USE_QRCODE 0
 #define LV_USE_BARCODE 0
-#define LV_USE_FREETYPE 0
+#define LV_USE_FREETYPE 1
 #define LV_USE_TINY_TTF 0
 #define LV_USE_RLOTTIE 0
 #define LV_USE_GLTF 0
@@ -178,7 +178,7 @@
 #define LV_USE_FILE_EXPLORER 0
 #define LV_USE_FONT_MANAGER 0
 #define LV_USE_TEST 0
-#define LV_USE_TRANSLATION 0
+#define LV_USE_TRANSLATION 1
 #define LV_USE_COLOR_FILTER 0
 
 #define LV_USE_SDL 0
