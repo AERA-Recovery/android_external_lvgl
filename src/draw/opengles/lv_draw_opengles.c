@@ -56,6 +56,10 @@ typedef struct {
     unsigned int streaming_texture;
     int32_t streaming_width;
     int32_t streaming_height;
+    unsigned int blur_texture;
+    unsigned int blur_pass_texture;
+    int32_t blur_width;
+    int32_t blur_height;
 } lv_draw_opengles_unit_t;
 
 /* All descriptors accepted by execute_drawing().  Keeping the transient cache
@@ -92,6 +96,7 @@ static uint32_t opengles_text_hash(const char * text);
 
 static void blend_texture_layer(lv_draw_task_t * t);
 static bool draw_streaming_image(lv_draw_task_t * t);
+static bool draw_backdrop_blur(lv_draw_opengles_unit_t * u, lv_draw_task_t * t);
 static void draw_from_cached_texture(lv_draw_task_t * t);
 
 static void execute_drawing(lv_draw_opengles_unit_t * u);
@@ -152,6 +157,12 @@ void lv_draw_opengles_deinit(void)
     lv_free(g_unit->render_draw_buf.unaligned_data);
     if(g_unit->streaming_texture != 0) {
         GL_CALL(glDeleteTextures(1, &g_unit->streaming_texture));
+    }
+    if(g_unit->blur_texture != 0) {
+        GL_CALL(glDeleteTextures(1, &g_unit->blur_texture));
+    }
+    if(g_unit->blur_pass_texture != 0) {
+        GL_CALL(glDeleteTextures(1, &g_unit->blur_pass_texture));
     }
     lv_cache_destroy(g_unit->texture_cache, g_unit);
     if(g_unit->framebuffer != 0) {
@@ -580,6 +591,89 @@ static bool draw_streaming_image(lv_draw_task_t * t)
     return true;
 }
 
+static bool draw_backdrop_blur(lv_draw_opengles_unit_t * u, lv_draw_task_t * t)
+{
+    if(t->type != LV_DRAW_TASK_TYPE_BLUR) return false;
+    const lv_draw_blur_dsc_t * dsc = (const lv_draw_blur_dsc_t *)t->draw_dsc;
+    if(dsc->blur_radius <= 0) return true;
+
+    lv_layer_t * layer = t->target_layer;
+    lv_area_t area;
+    if(!lv_area_intersect(&area, &t->area, &t->clip_area) ||
+       !lv_area_intersect(&area, &area, &layer->buf_area)) return true;
+
+    const int32_t width = lv_area_get_width(&area);
+    const int32_t height = lv_area_get_height(&area);
+    const int32_t target_width = lv_area_get_width(&layer->buf_area);
+    const int32_t target_height = lv_area_get_height(&layer->buf_area);
+    const unsigned int target_texture = layer_get_texture(layer);
+    if(target_texture != 0) {
+        const unsigned int framebuffer = get_framebuffer(u);
+        GL_CALL(glBindFramebuffer(GL_FRAMEBUFFER, framebuffer));
+        GL_CALL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, target_texture, 0));
+    }
+    else {
+        GL_CALL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+    }
+
+    if(u->blur_texture == 0) GL_CALL(glGenTextures(1, &u->blur_texture));
+    if(u->blur_pass_texture == 0) GL_CALL(glGenTextures(1, &u->blur_pass_texture));
+    GL_CALL(glBindTexture(GL_TEXTURE_2D, u->blur_texture));
+    GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    if(u->blur_width != width || u->blur_height != height) {
+        GL_CALL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, NULL));
+        GL_CALL(glBindTexture(GL_TEXTURE_2D, u->blur_pass_texture));
+        GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+        GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+        GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+        GL_CALL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+        GL_CALL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, NULL));
+        GL_CALL(glBindTexture(GL_TEXTURE_2D, u->blur_texture));
+        u->blur_width = width;
+        u->blur_height = height;
+    }
+
+    const int32_t source_x = area.x1 - layer->buf_area.x1;
+    const int32_t source_y = target_height -
+        (area.y2 - layer->buf_area.y1 + 1);
+    GL_CALL(glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, source_x, source_y,
+                               width, height));
+
+    const unsigned int framebuffer = get_framebuffer(u);
+    GL_CALL(glBindFramebuffer(GL_FRAMEBUFFER, framebuffer));
+    GL_CALL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, u->blur_pass_texture, 0));
+    lv_area_t pass_area;
+    lv_area_set(&pass_area, 0, 0, width - 1, height - 1);
+    lv_opengles_viewport(0, 0, width, height);
+    lv_opengles_render_blur_texture(u->blur_texture, &pass_area, width, height,
+                                    (float)dsc->blur_radius, 0.f, 1.f, 0.f);
+
+    if(target_texture != 0) {
+        GL_CALL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, target_texture, 0));
+    }
+    else {
+        GL_CALL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+    }
+
+    lv_area_t render_area = area;
+    lv_area_move(&render_area, -layer->buf_area.x1, -layer->buf_area.y1);
+    lv_opengles_viewport(0, 0, target_width, target_height);
+    lv_opengles_render_blur_texture(u->blur_pass_texture, &render_area,
+                                    target_width, target_height,
+                                    (float)dsc->blur_radius,
+                                    (float)dsc->corner_radius, 0.f, 1.f);
+    if(target_texture != 0) GL_CALL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+    return true;
+}
+
 static void draw_from_cached_texture(lv_draw_task_t * t)
 {
     LV_PROFILER_DRAW_BEGIN;
@@ -774,6 +868,8 @@ static void execute_drawing(lv_draw_opengles_unit_t * u)
 {
     lv_draw_task_t * t = u->task_act;
     t->draw_unit = (lv_draw_unit_t *)u;
+
+    if(draw_backdrop_blur(u, t)) return;
 
     /* the shader-based fill is not working reliably with EGL. */
     if(t->type == LV_DRAW_TASK_TYPE_FILL) {

@@ -131,6 +131,10 @@ typedef struct {
     bool rb_swap;
     lv_color_t fill_color;
     bool blend_opt;
+    float blur_radius;
+    float blur_corner_radius;
+    float blur_direction_x;
+    float blur_direction_y;
     const lv_matrix_t * matrix;
 } lv_opengles_render_params_t;
 

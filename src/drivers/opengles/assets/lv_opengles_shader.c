@@ -86,6 +86,10 @@ static const char *src_fragment_shader_v100 = R"(
     uniform bool u_IsFill;
     uniform vec3 u_FillColor;
     uniform bool u_SwapRB;
+    uniform bool u_IsBlur;
+    uniform vec3 u_BlurParams;
+    uniform vec3 u_BlurShape;
+    uniform vec3 u_BlurDirection;
     
     #ifdef HSV_ADJUST
 #include <hsv_adjust.glsl>
@@ -96,6 +100,15 @@ static const char *src_fragment_shader_v100 = R"(
         vec4 texColor;
         if (u_IsFill) {
             texColor = vec4(u_FillColor, 1.0);
+        } else if (u_IsBlur) {
+            vec2 stepSize = vec2(u_BlurDirection.x / u_BlurParams.y,
+                                 u_BlurDirection.y / u_BlurParams.z) *
+                            max(u_BlurParams.x * 0.25, 0.35);
+            texColor = texture2D(u_Texture, v_TexCoord) * 0.227027;
+            texColor += texture2D(u_Texture, v_TexCoord + stepSize * 1.384615) * 0.316216;
+            texColor += texture2D(u_Texture, v_TexCoord - stepSize * 1.384615) * 0.316216;
+            texColor += texture2D(u_Texture, v_TexCoord + stepSize * 3.230769) * 0.070270;
+            texColor += texture2D(u_Texture, v_TexCoord - stepSize * 3.230769) * 0.070270;
         } else {
             texColor = texture2D(u_Texture, v_TexCoord);
         }
@@ -108,6 +121,13 @@ static const char *src_fragment_shader_v100 = R"(
         }
         if (u_SwapRB) {
             gl_FragColor.bgr = gl_FragColor.rgb;
+        }
+        if (u_IsBlur && u_BlurShape.z > 0.0) {
+            vec2 halfSize = u_BlurShape.xy * 0.5;
+            vec2 point = abs(v_TexCoord * u_BlurShape.xy - halfSize);
+            vec2 edge = halfSize - vec2(u_BlurShape.z);
+            float distanceToCorner = length(max(point - edge, vec2(0.0))) - u_BlurShape.z;
+            gl_FragColor *= 1.0 - smoothstep(-1.0, 1.0, distanceToCorner);
         }
         #ifdef HSV_ADJUST
         gl_FragColor.rgb = adjustHSV(gl_FragColor.rgb);
@@ -213,6 +233,10 @@ static const char *src_fragment_shader_v300es = R"(
     uniform sampler2D u_Texture;
     uniform lowp float u_Opa;
     uniform bool u_SwapRB;
+    uniform bool u_IsBlur;
+    uniform mediump vec3 u_BlurParams;
+    uniform mediump vec3 u_BlurShape;
+    uniform mediump vec3 u_BlurDirection;
     
     #ifdef HSV_ADJUST
 #include <hsv_adjust.glsl>
@@ -222,6 +246,15 @@ static const char *src_fragment_shader_v300es = R"(
     {
         if (fill_color_alpha.a != -1.0) {
             color = fill_color_alpha;
+        } else if (u_IsBlur) {
+            mediump vec2 stepSize = vec2(u_BlurDirection.x / u_BlurParams.y,
+                                         u_BlurDirection.y / u_BlurParams.z) *
+                                    max(u_BlurParams.x * 0.25, 0.35);
+            color = texture(u_Texture, v_TexCoord) * 0.227027;
+            color += texture(u_Texture, v_TexCoord + stepSize * 1.384615) * 0.316216;
+            color += texture(u_Texture, v_TexCoord - stepSize * 1.384615) * 0.316216;
+            color += texture(u_Texture, v_TexCoord + stepSize * 3.230769) * 0.070270;
+            color += texture(u_Texture, v_TexCoord - stepSize * 3.230769) * 0.070270;
         } else {
             color = texture(u_Texture, v_TexCoord);
             /* If the vertices have been transformed, and mipmaps have not been generated, 
@@ -239,6 +272,13 @@ static const char *src_fragment_shader_v300es = R"(
         }
         if (u_SwapRB) {
             color.bgr = color.rgb;
+        }
+        if (u_IsBlur && u_BlurShape.z > 0.0) {
+            mediump vec2 halfSize = u_BlurShape.xy * 0.5;
+            mediump vec2 point = abs(v_TexCoord * u_BlurShape.xy - halfSize);
+            mediump vec2 edge = halfSize - vec2(u_BlurShape.z);
+            mediump float distanceToCorner = length(max(point - edge, vec2(0.0))) - u_BlurShape.z;
+            color *= 1.0 - smoothstep(-1.0, 1.0, distanceToCorner);
         }
         #ifdef HSV_ADJUST
         color.rgb = adjustHSV(color.rgb);

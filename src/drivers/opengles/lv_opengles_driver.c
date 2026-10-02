@@ -88,8 +88,8 @@ static unsigned int index_buffer_count = 0;
 
 static unsigned int shader_id;
 
-static const char * shader_names[] = { "u_Texture", "u_ColorDepth", "u_VertexTransform", "u_Opa", "u_IsFill", "u_FillColor", "u_SwapRB", "u_Hue", "u_Saturation", "u_Value" };
-static int shader_location[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+static const char * shader_names[] = { "u_Texture", "u_ColorDepth", "u_VertexTransform", "u_Opa", "u_IsFill", "u_FillColor", "u_SwapRB", "u_Hue", "u_Saturation", "u_Value", "u_IsBlur", "u_BlurParams", "u_BlurShape", "u_BlurDirection" };
+static int shader_location[sizeof(shader_names) / sizeof(shader_names[0])];
 
 /**********************
  *      MACROS
@@ -195,6 +195,32 @@ void lv_opengles_render_texture_precise(unsigned int texture, float x, float y, 
     LV_PROFILER_DRAW_END;
 }
 
+void lv_opengles_render_blur_texture(unsigned int texture, const lv_area_t * area,
+                                     int32_t disp_w, int32_t disp_h,
+                                     float blur_radius, float corner_radius,
+                                     float direction_x, float direction_y)
+{
+    LV_PROFILER_DRAW_BEGIN;
+    lv_opengles_render_params_t params;
+    lv_opengles_render_params_init(&params);
+    params.texture = texture;
+    params.texture_area = area;
+    params.opa = LV_OPA_COVER;
+    params.disp_w = disp_w;
+    params.disp_h = disp_h;
+    params.texture_clip_area = area;
+    /* glCopyTexSubImage2D stores the framebuffer's bottom row at texture v=0,
+     * unlike LVGL's top-first image uploads. Flip only copied backdrop
+     * textures so an invalidated dock never flashes vertically mirrored. */
+    params.v_flip = true;
+    params.blur_radius = blur_radius;
+    params.blur_corner_radius = corner_radius;
+    params.blur_direction_x = direction_x;
+    params.blur_direction_y = direction_y;
+    lv_opengles_render(&params);
+    LV_PROFILER_DRAW_END;
+}
+
 void lv_opengles_render_texture_rbswap(unsigned int texture, const lv_area_t * texture_area, lv_opa_t opa,
                                        int32_t disp_w,
                                        int32_t disp_h, const lv_area_t * texture_clip_area, bool h_flip, bool v_flip)
@@ -267,6 +293,10 @@ void lv_opengles_render_display(lv_display_t * display, const lv_opengles_render
     lv_opengles_shader_set_uniform1i("u_IsFill", 0);
     lv_opengles_shader_set_uniform3f("u_FillColor", 1.0f, 1.0f, 1.0f);
     lv_opengles_shader_set_uniform1i("u_SwapRB", params->rb_swap);
+    /* The display presentation path uses the shared shader directly rather
+     * than lv_opengles_render().  Do not let a backdrop blur from the final
+     * LVGL draw task leak into the full-screen composition for one frame. */
+    lv_opengles_shader_set_uniform1i("u_IsBlur", 0);
 
     lv_opengles_render_draw();
     LV_PROFILER_DRAW_END;
@@ -476,6 +506,17 @@ void lv_opengles_render(const lv_opengles_render_params_t * params)
                                      (float)params->fill_color.green / 255.0f,
                                      (float)params->fill_color.blue / 255.0f);
     lv_opengles_shader_set_uniform1i("u_SwapRB", params->rb_swap ? 1 : 0);
+    lv_opengles_shader_set_uniform1i("u_IsBlur", params->blur_radius > 0.f ? 1 : 0);
+    lv_opengles_shader_set_uniform3f("u_BlurParams", params->blur_radius,
+                                     params->texture_area == NULL ? 1.f : (float)lv_area_get_width(params->texture_area),
+                                     params->texture_area == NULL ? 1.f : (float)lv_area_get_height(params->texture_area));
+    lv_opengles_shader_set_uniform3f("u_BlurShape",
+                                     params->texture_area == NULL ? 1.f : (float)lv_area_get_width(params->texture_area),
+                                     params->texture_area == NULL ? 1.f : (float)lv_area_get_height(params->texture_area),
+                                     params->blur_corner_radius);
+    lv_opengles_shader_set_uniform3f("u_BlurDirection",
+                                     params->blur_direction_x,
+                                     params->blur_direction_y, 0.f);
 
     lv_opengles_render_draw();
     lv_opengles_disable_blending();

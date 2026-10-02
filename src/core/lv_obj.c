@@ -718,7 +718,10 @@ static void lv_obj_draw(lv_event_t * e)
             lv_draw_blur_dsc_t blur_dsc;
             lv_draw_blur_dsc_init(&blur_dsc);
             lv_obj_init_draw_blur_dsc(obj, LV_PART_MAIN, &blur_dsc);
-            blur_dsc.corner_radius = draw_dsc.radius;
+            /* draw_dsc has not received the object's style yet. Reading its
+             * default radius here made every backdrop blur rectangular even
+             * when the surface itself was rounded. */
+            blur_dsc.corner_radius = lv_obj_get_style_radius(obj, LV_PART_MAIN);
             blur_dsc.base.layer = layer;
             lv_draw_blur(layer, &blur_dsc, &coords);
         }
