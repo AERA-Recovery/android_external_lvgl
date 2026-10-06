@@ -5,6 +5,9 @@
 #ifndef LV_CONF_H
 #define LV_CONF_H
 
+/* Let a touch leave a button to cancel the pending click. */
+#define LV_AERA_CANCELABLE_BUTTONS 1
+
 #define LV_COLOR_DEPTH 32
 
 #define LV_USE_STDLIB_MALLOC  LV_STDLIB_CLIB
